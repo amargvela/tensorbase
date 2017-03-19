@@ -535,10 +535,10 @@ class Data:
         self.train_images, self.train_labels, self.valid_images, self.valid_labels = \
             self.split_data(train_images, train_labels)
 
-        self.train_epochs_completed = 0
-        self.index_in_train_epoch = 0
-        self.index_in_valid_epoch = 0
-        self.index_in_test_epoch = 0
+        self.train_epochs_completed = -1
+        self.index_in_train_epoch = -1
+        self.index_in_valid_epoch = -1
+        self.index_in_test_epoch = -1
 
     def load_data(self, test_percent=0.15):
         """Load the dataset into memory. If data is not divided into train/test, use test_percent to divide the data"""
@@ -547,6 +547,9 @@ class Data:
         test_images = list()
         test_labels = list()
         return train_images, train_labels, test_images, test_labels
+
+    def get_data(self, meta):
+        raise NotImplementedError
 
     def split_data(self, train_images, train_labels):
         """
@@ -569,7 +572,8 @@ class Data:
         """
         start = self.index_in_train_epoch
         self.index_in_train_epoch += batch_size
-        if self.index_in_train_epoch > self.num_train_images:
+        if (self.index_in_train_epoch >= self.num_train_images or
+            start == -1):
             # Finished epoch
             self.train_epochs_completed += 1
 
@@ -585,7 +589,10 @@ class Data:
             assert batch_size <= self.num_train_images
 
         end = self.index_in_train_epoch
-        return self.train_labels[start:end], self.img_norm(self.train_images[start:end])
+        print(start, end)
+        
+        train_X, train_Y = self.get_data(self.train_images[start:end])
+        return train_Y, self.img_norm(train_X)
 
     def next_valid_batch(self, batch_size):
         """
@@ -594,12 +601,21 @@ class Data:
         :return train_labels: list, of labels
         :return images: list, of images
         """
+        if self.index_in_valid_epoch == -1:
+            perm = np.arange(self.num_valid_images)
+            np.random.shuffle(perm)
+            self.valid_images = self.valid_images[perm]
+            self.valid_labels = self.valid_labels[perm]
+            self.index_in_valid_epoch = 0
+
         start = self.index_in_valid_epoch
         if self.index_in_valid_epoch + batch_size > self.num_valid_images:
             batch_size = 1
         self.index_in_valid_epoch += batch_size
         end = self.index_in_valid_epoch
-        return self.valid_labels[start:end], self.img_norm(self.valid_images[start:end]), end, batch_size
+
+        valid_X, valid_Y = self.get_data(self.valid_images[start:end])
+        return valid_Y, self.img_norm(valid_X), end, batch_size
 
     def next_test_batch(self, batch_size):
         """
@@ -608,13 +624,22 @@ class Data:
         :return train_labels: list, of labels
         :return images: list, of images
         """
+        if self.index_in_test_epoch == -1:
+            perm = np.arange(self.num_test_images)
+            np.random.shuffle(perm)
+            self.test_images = self.test_images[perm]
+            self.test_labels = self.test_labels[perm]
+            self.index_in_test_epoch = 0
+
         start = self.index_in_test_epoch
         print(start)
         if self.index_in_test_epoch + batch_size > self.num_test_images:
             batch_size = 1
         self.index_in_test_epoch += batch_size
         end = self.index_in_test_epoch
-        return self.test_labels[start:end], self.img_norm(self.test_images[start:end]), end, batch_size
+
+        test_X, test_Y = self.get_data(self.test_images[start:end])
+        return test_Y, self.img_norm(test_X), end, batch_size
 
     @property
     def num_train_images(self):
@@ -760,15 +785,16 @@ class Model:
         self.print_log("Seed: %d" % self.flags['seed'])
 
     def _summaries(self):
-        for var in tf.trainable_variables():
-            tf.histogram_summary(var.name, var)
-            print(var.name)
+        pass
+        #for var in tf.trainable_variables():
+        #    tf.histogram_summary(var.name, var)
+        #    print(var.name)
 
     def _set_tf_functions(self, vram=0.25):
         merged = tf.summary.merge_all()
         saver = tf.train.Saver()
-        config = tf.ConfigProto(log_device_placement=False)
-        config.gpu_options.per_process_gpu_memory_fraction = vram
+        config = tf.ConfigProto() #log_device_placement=False)
+        #config.gpu_options.per_process_gpu_memory_fraction = vram
         sess = tf.InteractiveSession(config=config)
         writer = tf.summary.FileWriter(self.flags['logging_directory'], sess.graph)
         return merged, saver, sess, writer
